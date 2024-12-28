@@ -2,21 +2,22 @@ use crate::traits::Team;
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
-use std::array::{from_fn, IntoIter};
+use std::iter::repeat_with;
 use std::mem;
 use std::num::NonZero;
 use std::slice::{Iter, IterMut};
+use std::vec::IntoIter;
 use thiserror::Error;
 
 /// Minimum number of players per group.
 pub const MIN_PLAYERS_PER_GROUP: usize = 4;
 
 /// Generated groups.
-pub struct Groups<'a, T: Team, const N: usize> {
-    groups: [Group<'a, T>; N],
+pub struct Groups<'a, T: Team> {
+    groups: Vec<Group<'a, T>>,
 }
 
-impl<'a, T: Team, const N: usize> Groups<'a, T, N> {
+impl<'a, T: Team> Groups<'a, T> {
     /// Returns an iterator over the generated groups.
     #[inline]
     pub fn iter<'b>(&'b self) -> Iter<'b, Group<'a, T>> {
@@ -30,7 +31,7 @@ impl<'a, T: Team, const N: usize> Groups<'a, T, N> {
     }
 }
 
-impl<'a, 'b, T: Team, const N: usize> IntoIterator for &'b Groups<'a, T, N> {
+impl<'a, 'b, T: Team> IntoIterator for &'b Groups<'a, T> {
     type Item = &'b Group<'a, T>;
     type IntoIter = Iter<'b, Group<'a, T>>;
 
@@ -41,7 +42,7 @@ impl<'a, 'b, T: Team, const N: usize> IntoIterator for &'b Groups<'a, T, N> {
     }
 }
 
-impl<'a, 'b, T: Team, const N: usize> IntoIterator for &'b mut Groups<'a, T, N> {
+impl<'a, 'b, T: Team> IntoIterator for &'b mut Groups<'a, T> {
     type Item = &'b mut Group<'a, T>;
     type IntoIter = IterMut<'b, Group<'a, T>>;
 
@@ -52,9 +53,9 @@ impl<'a, 'b, T: Team, const N: usize> IntoIterator for &'b mut Groups<'a, T, N> 
     }
 }
 
-impl<'a, T: Team, const N: usize> IntoIterator for Groups<'a, T, N> {
+impl<'a, T: Team> IntoIterator for Groups<'a, T> {
     type Item = Group<'a, T>;
-    type IntoIter = IntoIter<Group<'a, T>, N>;
+    type IntoIter = IntoIter<Group<'a, T>>;
 
     /// Returns an iterator over the generated groups.
     #[inline]
@@ -73,6 +74,16 @@ pub struct Group<'a, T: Team> {
     pub duels: Vec<Duel<'a, T>>,
 }
 
+impl<T: Team> Clone for Group<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Group {
+            teams: self.teams.clone(),
+            duels: self.duels.clone(),
+        }
+    }
+}
+
 /// A duel of a generated group.
 #[derive(Debug)]
 pub struct Duel<'a, T: Team> {
@@ -81,6 +92,15 @@ pub struct Duel<'a, T: Team> {
     /// Bacchiatore with opposite role.
     pub opposite: &'a T,
 }
+
+impl<T: Team> Clone for Duel<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Team> Copy for Duel<'_, T> {}
 
 impl<'a, T: Team> Group<'a, T> {
     #[inline]
@@ -100,17 +120,14 @@ pub enum GroupGenError {
     NotEnoughTeams(usize, usize),
 }
 
-/// Generates `N` groups from the provided teams.
-pub fn generate_groups<T: Team, const N: usize>(
+/// Generates `groups` groups from the provided teams.
+pub fn generate_groups<T: Team>(
     teams: &mut [T],
-) -> Result<Groups<T, N>, GroupGenError> {
-    const {
-        NonZero::new(N).expect("Number of groups must be greater than zero");
-    }
-
-    if teams.len() < N * MIN_PLAYERS_PER_GROUP {
+    number_of_groups: NonZero<usize>,
+) -> Result<Groups<T>, GroupGenError> {
+    if teams.len() < number_of_groups.get() * MIN_PLAYERS_PER_GROUP {
         return Err(GroupGenError::NotEnoughTeams(
-            N * MIN_PLAYERS_PER_GROUP,
+            number_of_groups.get() * MIN_PLAYERS_PER_GROUP,
             teams.len(),
         ));
     }
@@ -120,7 +137,9 @@ pub fn generate_groups<T: Team, const N: usize>(
     // Generate groups based on strength
     teams.shuffle(&mut rng);
     teams.sort_by_key(|t| t.strength()); // Keeps the random order (gave by shuffle) if the strength is the same
-    let mut groups: [_; N] = from_fn(|_| Group::new());
+    let mut groups: Vec<_> = repeat_with(|| Group::new())
+        .take(number_of_groups.get())
+        .collect();
     let mut iter = groups.iter_mut();
     for team in teams.iter() {
         match iter.next() {
@@ -157,6 +176,7 @@ mod test {
     use crate::groups::generate_groups;
     use crate::traits::Team;
     use std::fmt::{Display, Formatter};
+    use std::num::NonZero;
 
     #[test]
     fn test_groups() {
@@ -186,7 +206,7 @@ mod test {
             ConcreteTeam("E", 10),
             ConcreteTeam("F", 8),
         ];
-        let groups = generate_groups::<_, 2>(&mut teams).unwrap();
+        let groups = generate_groups(&mut teams, NonZero::new(2).unwrap()).unwrap();
 
         let mut i = 0;
         for group in groups {
