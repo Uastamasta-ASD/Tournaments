@@ -3,10 +3,9 @@ use itertools::Itertools;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
 use std::iter::repeat_with;
+use std::marker::PhantomData;
 use std::mem;
 use std::num::NonZero;
-use std::slice::{Iter, IterMut};
-use std::vec::IntoIter;
 use thiserror::Error;
 
 /// Minimum number of players per group.
@@ -14,54 +13,10 @@ pub const MIN_PLAYERS_PER_GROUP: usize = 4;
 
 /// Generated groups.
 pub struct Groups<'a, T: Team> {
-    groups: Vec<Group<'a, T>>,
-}
+    /// The generated groups.
+    pub groups: Vec<Group<'a, T>>,
 
-impl<'a, T: Team> Groups<'a, T> {
-    /// Returns an iterator over the generated groups.
-    #[inline]
-    pub fn iter<'b>(&'b self) -> Iter<'b, Group<'a, T>> {
-        IntoIterator::into_iter(self)
-    }
-
-    /// Returns an iterator over the generated groups.
-    #[inline]
-    pub fn iter_mut<'b>(&'b mut self) -> IterMut<'b, Group<'a, T>> {
-        IntoIterator::into_iter(self)
-    }
-}
-
-impl<'a, 'b, T: Team> IntoIterator for &'b Groups<'a, T> {
-    type Item = &'b Group<'a, T>;
-    type IntoIter = Iter<'b, Group<'a, T>>;
-
-    /// Returns an iterator over the generated groups.
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.groups.iter()
-    }
-}
-
-impl<'a, 'b, T: Team> IntoIterator for &'b mut Groups<'a, T> {
-    type Item = &'b mut Group<'a, T>;
-    type IntoIter = IterMut<'b, Group<'a, T>>;
-
-    /// Returns an iterator over the generated groups.
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.groups.iter_mut()
-    }
-}
-
-impl<'a, T: Team> IntoIterator for Groups<'a, T> {
-    type Item = Group<'a, T>;
-    type IntoIter = IntoIter<Group<'a, T>>;
-
-    /// Returns an iterator over the generated groups.
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.groups.into_iter()
-    }
+    phantom: PhantomData<()>,
 }
 
 /// A generated group.
@@ -72,6 +27,19 @@ pub struct Group<'a, T: Team> {
 
     /// An ordered list of the duels of this group.
     pub duels: Vec<Duel<'a, T>>,
+
+    phantom: PhantomData<()>,
+}
+
+impl<'a, T: Team> Group<'a, T> {
+    #[inline]
+    fn new() -> Group<'a, T> {
+        Group {
+            teams: Vec::new(),
+            duels: Vec::new(),
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<T: Team> Clone for Group<'_, T> {
@@ -80,6 +48,7 @@ impl<T: Team> Clone for Group<'_, T> {
         Group {
             teams: self.teams.clone(),
             duels: self.duels.clone(),
+            phantom: PhantomData,
         }
     }
 }
@@ -91,6 +60,8 @@ pub struct Duel<'a, T: Team> {
     pub equal: &'a T,
     /// Bacchiatore with opposite role.
     pub opposite: &'a T,
+
+    phantom: PhantomData<()>,
 }
 
 impl<T: Team> Clone for Duel<'_, T> {
@@ -101,16 +72,6 @@ impl<T: Team> Clone for Duel<'_, T> {
 }
 
 impl<T: Team> Copy for Duel<'_, T> {}
-
-impl<'a, T: Team> Group<'a, T> {
-    #[inline]
-    fn new() -> Group<'a, T> {
-        Group {
-            teams: Vec::new(),
-            duels: Vec::new(),
-        }
-    }
-}
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -152,23 +113,31 @@ pub fn generate_groups<T: Team>(
     }
 
     // Add duels to groups
-    for Group { teams, duels } in &mut groups {
+    for Group { teams, duels, .. } in &mut groups {
         *duels = teams
             .iter()
             .copied()
             .tuple_combinations()
-            .map(|(equal, opposite)| Duel { equal, opposite })
+            .map(|(equal, opposite)| Duel {
+                equal,
+                opposite,
+                phantom: PhantomData,
+            })
             .collect();
 
-        for Duel { equal, opposite } in duels.iter_mut() {
+        for Duel { equal, opposite, .. } in duels.iter_mut() {
             if rng.gen() {
                 mem::swap(equal, opposite);
             }
         }
+
         // TODO Make sure two successive duels don't share any player (to make them rest between duels)
     }
 
-    Ok(Groups { groups })
+    Ok(Groups {
+        groups,
+        phantom: PhantomData,
+    })
 }
 
 #[cfg(test)]
@@ -203,13 +172,13 @@ mod test {
             ConcreteTeam("D", 10),
             ConcreteTeam("E", 10),
             ConcreteTeam("F", 8),
-            ConcreteTeam("E", 10),
-            ConcreteTeam("F", 8),
+            ConcreteTeam("G", 10),
+            ConcreteTeam("H", 8),
         ];
         let groups = generate_groups(&mut teams, NonZero::new(2).unwrap()).unwrap();
 
         let mut i = 0;
-        for group in groups {
+        for group in groups.groups {
             i += 1;
             println!("Group {i}:");
             println!("\tTeams:");
