@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-pub mod traits;
 pub mod groups;
 
 /// Minimum number of players in a tournament.

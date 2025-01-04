@@ -1,4 +1,3 @@
-use crate::traits::Team;
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -10,6 +9,12 @@ use thiserror::Error;
 
 /// Minimum number of players per group.
 pub const MIN_PLAYERS_PER_GROUP: usize = 4;
+
+/// A team of a tournament.
+pub trait Team {
+    /// Returns an estimation of the strength of the team. Should be in the range 0-10.
+    fn strength(&self) -> i32;
+}
 
 /// Generated groups.
 pub struct Groups<'a, T: Team> {
@@ -142,8 +147,7 @@ pub fn generate_groups<T: Team>(
 
 #[cfg(test)]
 mod test {
-    use crate::groups::generate_groups;
-    use crate::traits::Team;
+    use crate::groups::{generate_groups, Team};
     use std::fmt::{Display, Formatter};
     use std::num::NonZero;
 
