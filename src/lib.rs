@@ -4,5 +4,5 @@ pub mod groups;
 pub mod standings;
 pub mod play_offs;
 
-/// Minimum number of players in a tournament.
-pub const MIN_PLAYER_NUMBER: usize = groups::MIN_PLAYERS_PER_GROUP;
+/// Minimum number of teams in a tournament.
+pub const MIN_TEAMS_TOURNAMENT: usize = groups::MIN_TEAMS_PER_GROUP;
