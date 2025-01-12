@@ -17,26 +17,31 @@ pub struct PlayOffsDuel<T> {
 
 impl<T> PlayOffsDuel<T> {
     #[inline]
-    fn from(mut team1: impl AsMut<Team<T>>, mut team2: impl AsMut<Team<T>>) -> Self {
+    fn from(
+        mut team1: impl AsMut<Team<T>>,
+        mut team2: impl AsMut<Team<T>>,
+    ) -> Result<Self, PlayOffsError> {
         use Team::{Empty, Equal, Opposite};
 
         match (mem::take(team1.as_mut()), mem::take(team2.as_mut())) {
-            (Equal(t1), Opposite(t2)) | (Opposite(t2), Equal(t1)) => PlayOffsDuel {
+            (Equal(t1), Opposite(t2)) | (Opposite(t2), Equal(t1)) => Ok(PlayOffsDuel {
                 equal: Some(t1),
                 opposite: Some(t2),
                 _phantom: PhantomData,
-            },
-            (Equal(t), Empty) | (Empty, Equal(t)) => PlayOffsDuel {
+            }),
+            (Equal(t), Empty) | (Empty, Equal(t)) => Ok(PlayOffsDuel {
                 equal: Some(t),
                 opposite: None,
                 _phantom: PhantomData,
-            },
-            (Opposite(t), Empty) | (Empty, Opposite(t)) => PlayOffsDuel {
+            }),
+            (Opposite(t), Empty) | (Empty, Opposite(t)) => Ok(PlayOffsDuel {
                 equal: None,
                 opposite: Some(t),
                 _phantom: PhantomData,
-            },
-            _ => unreachable!(), // This method is an impl detail, this should never happen
+            }),
+            _ => Err(PlayOffsError::InternalError(
+                "invalid teams for duel generation",
+            )),
         }
     }
 }
@@ -73,6 +78,7 @@ pub fn generate_play_offs<T>(teams: Vec<T>) -> Result<Vec<PlayOffsDuel<T>>, Play
 
     let size = teams
         .len()
+        .div_ceil(2)
         .checked_next_power_of_two()
         .ok_or(PlayOffsError::InternalError("an overflow occurred"))?;
     let mut play_offs: Vec<PlayOffsDuel<T>> = Vec::with_capacity(size);
@@ -83,16 +89,50 @@ pub fn generate_play_offs<T>(teams: Vec<T>) -> Result<Vec<PlayOffsDuel<T>>, Play
         .map(|(i, team)| Team::from_index(i, team))
         .collect();
 
-    generate_duels(teams, &mut play_offs);
+    generate_duels(teams, &mut play_offs, size.ilog2())?;
+
+    debug_assert_eq!(play_offs.len(), size);
 
     Ok(play_offs)
 }
 
-fn generate_duels<T>(mut teams: Vec<Team<T>>, play_offs: &mut Vec<PlayOffsDuel<T>>) {
+fn generate_duels<T>(
+    mut teams: Vec<Team<T>>,
+    play_offs: &mut Vec<PlayOffsDuel<T>>,
+    depth: u32,
+) -> Result<(), PlayOffsError> {
+    if teams.is_empty() {
+        return Err(PlayOffsError::InternalError("no teams provided"));
+    }
+
     if let [team] = &mut *teams {
-        play_offs.push(PlayOffsDuel::from(team, Team::Empty));
+        // There cannot be "empty" duels, so we must be generating a leaf
+        if depth != 0 {
+            return Err(PlayOffsError::InternalError("depth is not zero"));
+        }
+
+        play_offs.push(PlayOffsDuel::from(team, Team::Empty)?);
     } else if let [team1, team2] = &mut *teams {
-        play_offs.push(PlayOffsDuel::from(team1, team2));
+        let duel = PlayOffsDuel::from(team1, team2)?;
+        if depth == 0 {
+            // We are generating a leaf
+            play_offs.push(duel);
+        } else if depth == 1 {
+            // We are in the level before leafs
+            play_offs.push(PlayOffsDuel {
+                equal: duel.equal,
+                opposite: None,
+                _phantom: PhantomData,
+            });
+            play_offs.push(PlayOffsDuel {
+                equal: None,
+                opposite: duel.opposite,
+                _phantom: PhantomData,
+            });
+        } else {
+            // We are in an upper level and would need to generate "empty" duels, which should never happen
+            return Err(PlayOffsError::InternalError("depth is greater than one"));
+        }
     } else {
         let len = teams.len() / 2;
         let mut teams1 = Vec::with_capacity(len);
@@ -111,14 +151,20 @@ fn generate_duels<T>(mut teams: Vec<Team<T>>, play_offs: &mut Vec<PlayOffsDuel<T
             }
         }
 
+        let next_depth = depth.checked_sub(1).ok_or(PlayOffsError::InternalError(
+            "overflow calculating next depth",
+        ))?;
+
         if invert {
-            generate_duels(teams2, play_offs);
-            generate_duels(teams1, play_offs);
+            generate_duels(teams2, play_offs, next_depth)?;
+            generate_duels(teams1, play_offs, next_depth)?;
         } else {
-            generate_duels(teams1, play_offs);
-            generate_duels(teams2, play_offs);
+            generate_duels(teams1, play_offs, next_depth)?;
+            generate_duels(teams2, play_offs, next_depth)?;
         }
     }
+
+    Ok(())
 }
 
 #[derive(Default)]
@@ -156,7 +202,7 @@ mod test {
         // Run with --nocapture
 
         let play_offs = generate_play_offs(vec![
-            "A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "M", "N", "O",
+            "A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "M",
         ])
         .unwrap();
 
@@ -177,6 +223,14 @@ mod test {
             } else {
                 println!("-");
             }
+        }
+    }
+
+    #[test]
+    fn test_large_play_offs() {
+        for i in MIN_TEAMS..=100 {
+            let teams: Vec<_> = (1..=i).map(|_| "team").collect();
+            generate_play_offs(teams).unwrap();
         }
     }
 }
