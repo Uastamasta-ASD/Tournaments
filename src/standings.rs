@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::num::NonZero;
 use thiserror::Error;
 
 /// A team of a group.
@@ -24,7 +25,6 @@ pub trait Duel {
 /// Statistics of the group standings.
 pub struct GroupStandingsStatistics {
     wins: usize,
-    losses: usize,
     points_difference: i32,
 }
 
@@ -32,9 +32,8 @@ pub struct GroupStandingsStatistics {
 #[non_exhaustive]
 /// Statistics of the general standings.
 pub struct GeneralStandingsStatistics {
-    wins: usize,
-    losses: usize,
-    points_difference: i32,
+    wins: String,
+    points_difference: String,
 }
 
 #[derive(Debug)]
@@ -75,8 +74,8 @@ impl<D: Duel, T: Team> StandingsBuilder<D, T> {
 
     #[inline]
     /// Evaluates the standings.
-    pub fn evaluate(self) -> Result<(), StandingsError> {
-        crate::standings::evaluate(self)
+    pub fn evaluate(self, max_duel_points: NonZero<u16>) -> Result<(), StandingsError> {
+        crate::standings::evaluate(self, max_duel_points)
     }
 }
 
@@ -103,7 +102,6 @@ impl<D: Duel, T: Team> GroupDuelsBuilder<'_, D, T> {
             TeamData {
                 group: self.builder.groups.len(),
                 wins: 0,
-                losses: 0,
                 points: 0,
             },
         ));
@@ -143,7 +141,6 @@ pub struct StandingsTeam {
 struct TeamData {
     group: usize, // Index of group
     wins: usize,
-    losses: usize,
     points: i32,
 }
 
@@ -160,19 +157,26 @@ struct DuelData {
     opposite: usize, // Index of opposite team
 }
 
-fn evaluate<D: Duel, T: Team>(mut builder: StandingsBuilder<D, T>) -> Result<(), StandingsError> {
+fn evaluate<D: Duel, T: Team>(
+    mut builder: StandingsBuilder<D, T>,
+    max_duel_points: NonZero<u16>,
+) -> Result<(), StandingsError> {
     for group in &mut builder.groups {
         for (duel, duel_data) in &mut group.duels {
-            if duel.equal_points() > duel.opposite_points() {
+            let equal_adv_points = if duel.equal_points() > duel.opposite_points() {
                 builder.teams[duel_data.equal].1.wins += 1;
-                builder.teams[duel_data.opposite].1.losses += 1;
+                1
             } else {
-                builder.teams[duel_data.equal].1.losses += 1;
                 builder.teams[duel_data.opposite].1.wins += 1;
-            }
-            builder.teams[duel_data.equal].1.points += duel.equal_points() - duel.opposite_points();
-            builder.teams[duel_data.opposite].1.points +=
-                duel.opposite_points() - duel.equal_points();
+                -1
+            };
+            let equal_point_diff = if advantage(duel, max_duel_points) {
+                equal_adv_points
+            } else {
+                duel.equal_points() - duel.opposite_points()
+            };
+            builder.teams[duel_data.equal].1.points += equal_point_diff;
+            builder.teams[duel_data.opposite].1.points += -equal_point_diff;
         }
     }
 
@@ -185,14 +189,11 @@ fn evaluate<D: Duel, T: Team>(mut builder: StandingsBuilder<D, T>) -> Result<(),
 
         let wins_1 = team_data_1.wins as f64 / size_1;
         let wins_2 = team_data_2.wins as f64 / size_2;
-        let losses_1 = team_data_1.losses as f64 / size_1;
-        let losses_2 = team_data_2.losses as f64 / size_2;
         let points_1 = team_data_1.points as f64 / size_1;
         let points_2 = team_data_2.points as f64 / size_2;
 
         wins_1
             .total_cmp(&wins_2)
-            .then(losses_1.total_cmp(&losses_2))
             .then(points_1.total_cmp(&points_2))
             .reverse()
     });
@@ -201,14 +202,17 @@ fn evaluate<D: Duel, T: Team>(mut builder: StandingsBuilder<D, T>) -> Result<(),
         let team = &mut builder.teams[team_index];
         let group = &mut builder.groups[team.1.group];
 
+        let duel_number = group.size - 1;
+        let wins = team.1.wins as f64 / duel_number as f64;
+        let points = team.1.points as f64 / (duel_number * max_duel_points.get() as usize) as f64;
+
         team.0.general_standings_callback(
             (i + 1)
                 .try_into()
                 .map_err(|_| StandingsError::InternalError("couldn't convert index to i32"))?,
             GeneralStandingsStatistics {
-                wins: team.1.wins,
-                losses: team.1.losses,
-                points_difference: team.1.points,
+                wins: format_percentages(wins),
+                points_difference: format_percentages(points),
             },
         );
 
@@ -219,13 +223,23 @@ fn evaluate<D: Duel, T: Team>(mut builder: StandingsBuilder<D, T>) -> Result<(),
             })?,
             GroupStandingsStatistics {
                 wins: team.1.wins,
-                losses: team.1.losses,
                 points_difference: team.1.points,
             },
         );
     }
 
     Ok(())
+}
+
+#[inline]
+fn advantage<D: Duel>(duel: &mut D, max_duel_points: NonZero<u16>) -> bool {
+    duel.equal_points() > max_duel_points.get() as i32
+        || duel.opposite_points() > max_duel_points.get() as i32
+}
+
+#[inline]
+fn format_percentages(percentage: f64) -> String {
+    format!("{:.2}%", percentage * 100.0)
 }
 
 // TRAIT DEFAULT IMPLEMENTATIONS
@@ -271,6 +285,8 @@ mod test {
     use super::*;
     use std::fmt::{Display, Formatter};
 
+    const MAX_POINTS: u16 = 5;
+
     #[test]
     fn test_standings() {
         // Run with --nocapture
@@ -295,7 +311,7 @@ mod test {
             builder.add_duel(team0, team3, ConcreteDuel::new(5, 3));
             builder.add_duel(team1, team2, ConcreteDuel::new(5, 2));
             builder.add_duel(team1, team3, ConcreteDuel::new(5, 3));
-            builder.add_duel(team2, team3, ConcreteDuel::new(5, 4));
+            builder.add_duel(team2, team3, ConcreteDuel::new(6, 4));
         });
         builder.add_group(|builder| {
             let team0 = builder.add_team(&mut team_e);
@@ -304,12 +320,12 @@ mod test {
             let team3 = builder.add_team(&mut team_h);
             builder.add_duel(team0, team1, ConcreteDuel::new(5, 2));
             builder.add_duel(team0, team2, ConcreteDuel::new(5, 3));
-            builder.add_duel(team0, team3, ConcreteDuel::new(5, 4));
+            builder.add_duel(team0, team3, ConcreteDuel::new(6, 4));
             builder.add_duel(team1, team2, ConcreteDuel::new(5, 3));
-            builder.add_duel(team1, team3, ConcreteDuel::new(5, 4));
-            builder.add_duel(team2, team3, ConcreteDuel::new(5, 4));
+            builder.add_duel(team1, team3, ConcreteDuel::new(6, 4));
+            builder.add_duel(team2, team3, ConcreteDuel::new(7, 5));
         });
-        builder.evaluate().unwrap();
+        builder.evaluate(NonZero::new(MAX_POINTS).unwrap()).unwrap();
 
         println!("{}", team_a);
         println!("{}", team_b);
@@ -325,7 +341,7 @@ mod test {
     struct ConcreteTeam {
         name: &'static str,
         group_pos_data: Option<(i32, GroupStandingsStatistics)>,
-        final_pos_data: Option<(i32, GeneralStandingsStatistics)>,
+        general_pos_data: Option<(i32, GeneralStandingsStatistics)>,
     }
 
     impl ConcreteTeam {
@@ -333,33 +349,46 @@ mod test {
             ConcreteTeam {
                 name,
                 group_pos_data: None,
-                final_pos_data: None,
+                general_pos_data: None,
             }
         }
     }
 
     impl Team for ConcreteTeam {
-        fn group_standings_callback(&mut self, position: i32, duel_data: GroupStandingsStatistics) {
-            self.group_pos_data = Some((position, duel_data));
+        fn group_standings_callback(
+            &mut self,
+            position: i32,
+            statistics: GroupStandingsStatistics,
+        ) {
+            self.group_pos_data = Some((position, statistics));
         }
 
         fn general_standings_callback(
             &mut self,
             position: i32,
-            duel_data: GeneralStandingsStatistics,
+            statistics: GeneralStandingsStatistics,
         ) {
-            self.final_pos_data = Some((position, duel_data));
+            self.general_pos_data = Some((position, statistics));
         }
     }
 
     impl Display for ConcreteTeam {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            let group_data = self
+                .group_pos_data
+                .as_ref()
+                .map(|(p, s)| (p.to_string(), serde_json::to_string(s).unwrap()))
+                .unwrap_or(("None".to_owned(), "None".to_owned()));
+            let general_data = self
+                .general_pos_data
+                .as_ref()
+                .map(|(p, s)| (p.to_string(), serde_json::to_string(s).unwrap()))
+                .unwrap_or(("None".to_owned(), "None".to_owned()));
+
             write!(
                 f,
-                "Team {} (group: {:?}, final: {:?})",
-                self.name,
-                self.group_pos_data.as_ref().map(|(p, _)| p),
-                self.final_pos_data.as_ref().map(|(p, _)| p)
+                "Team {} (group pos: {}, general pos: {}, group stats: {}, general stats: {})",
+                self.name, group_data.0, general_data.0, group_data.1, general_data.1,
             )
         }
     }
