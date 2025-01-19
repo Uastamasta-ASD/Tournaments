@@ -295,7 +295,7 @@ impl<D: Duel> Duel for &mut D {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::gen_seeder;
+    use crate::{gen_seed, gen_seeder};
     use std::fmt::{Display, Formatter};
 
     const MAX_POINTS: u16 = 5;
@@ -443,8 +443,13 @@ mod test {
 
     #[test]
     fn test_reproducibility() {
-        let seed = "hello";
+        // Execute a bunch of times to test against different seeds
+        for _ in 0..50 {
+            reproducibility_test_case(gen_seed());
+        }
+    }
 
+    fn reproducibility_test_case(seed: [u8; 32]) {
         let mut teams = test_teams();
         make_builder(&mut teams)
             .evaluate(NonZero::new(MAX_POINTS).unwrap(), Seeder::from(seed))

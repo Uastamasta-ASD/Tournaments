@@ -291,7 +291,7 @@ fn four_teams_group_duel_generation<'a, 'b: 'a, T: Team>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::gen_seeder;
+    use crate::{gen_seed, gen_seeder};
     use std::fmt::{Display, Formatter};
     use std::num::NonZero;
 
@@ -344,6 +344,13 @@ mod test {
 
     #[test]
     fn test_reproducibility() {
+        // Execute a bunch of times to test against different seeds
+        for _ in 0..50 {
+            reproducibility_test_case(gen_seed());
+        }
+    }
+
+    fn reproducibility_test_case(seed: [u8; 32]) {
         let teams = [
             ConcreteTeam("A", 10),
             ConcreteTeam("B", 10),
@@ -355,8 +362,6 @@ mod test {
             ConcreteTeam("H", 8),
             ConcreteTeam("I", 8),
         ];
-
-        let seed = "hello";
 
         let mut teams_clone = teams.clone();
         let first_groups = generate_groups(

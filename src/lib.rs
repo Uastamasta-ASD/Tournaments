@@ -14,8 +14,12 @@ pub(crate) type RandGen = rand_pcg::Pcg64Mcg;
 
 #[cfg(test)]
 pub(crate) fn gen_seeder() -> Seeder {
-    let seed: [u8; 32] = rand::random();
-    Seeder::from(seed)
+    Seeder::from(gen_seed())
+}
+
+#[cfg(test)]
+pub(crate) fn gen_seed() -> [u8; 32] {
+    rand::random()
 }
 
 // The stdlib one isn't const
