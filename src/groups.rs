@@ -5,6 +5,7 @@ use rand::prelude::SliceRandom;
 use rand::Rng;
 use std::iter::repeat_with;
 use std::marker::PhantomData;
+use std::mem;
 use std::num::NonZero;
 use thiserror::Error;
 
@@ -84,6 +85,17 @@ pub struct Duel<'a, T: Team> {
     _phantom: PhantomData<()>,
 }
 
+impl<'a, T: Team> Duel<'a, T> {
+    #[inline]
+    fn new(equal: &'a T, opposite: &'a T) -> Duel<'a, T> {
+        Duel {
+            equal,
+            opposite,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<T: Team> Clone for Duel<'_, T> {
     #[inline]
     fn clone(&self) -> Self {
@@ -138,10 +150,19 @@ pub fn generate_groups<T: Team>(
 
     // Add duels to groups
     for Group { teams, duels, .. } in &mut groups {
+        teams.shuffle(&mut rng);
+
         if teams.len() > 4 {
-            standard_group_duel_generation(teams, duels, &mut rng)?;
+            standard_group_duel_generation(teams, duels)?;
         } else {
-            four_teams_group_duel_generation(teams, duels, &mut rng)?;
+            four_teams_group_duel_generation(teams, duels)?;
+        }
+
+        // Randomize duel roles
+        for duel in duels {
+            if rng.gen() {
+                mem::swap(&mut duel.equal, &mut duel.opposite);
+            }
         }
     }
 
@@ -152,9 +173,8 @@ pub fn generate_groups<T: Team>(
 }
 
 fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
-    teams: &mut Vec<&'b T>,
+    teams: &mut [&'b T],
     duels: &'a mut Vec<Duel<'b, T>>,
-    rng: &mut impl Rng,
 ) -> Result<(), GroupGenError> {
     // This algorithm makes sure two successive duels don't share any team (to make the players rest between duels)
 
@@ -162,7 +182,10 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
 
     // TeamKey -> (TeamKey -> DuelIndex in gen_duels)
     let mut team_duels: IndexMap<_, IndexMap<_, _>> = IndexMap::with_capacity(teams.len());
-    let mut gen_duels: Vec<_> = duel_generation(teams, rng)
+    let mut gen_duels: Vec<_> = teams
+        .iter()
+        .copied()
+        .tuple_combinations()
         .enumerate()
         .map(|(i, (equal, opposite))| {
             let equal_key = equal as *const _ as usize;
@@ -176,11 +199,7 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
                 .or_default()
                 .insert(equal_key, i);
 
-            Some(Duel {
-                equal,
-                opposite,
-                _phantom: PhantomData,
-            })
+            Some(Duel::new(equal, opposite))
         })
         .collect();
 
@@ -241,36 +260,32 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
 }
 
 fn four_teams_group_duel_generation<'a, 'b: 'a, T: Team>(
-    teams: &mut Vec<&'b T>,
+    teams: &mut [&'b T],
     duels: &'a mut Vec<Duel<'b, T>>,
-    rng: &mut impl Rng,
 ) -> Result<(), GroupGenError> {
     // With 4 (or less) teams it's impossible to avoid having two successive
-    // duels don't share any team, so just generate and shuffle them
+    // duels don't share any team, so using a predetermined order is better
 
-    let mut gen_duels: Vec<_> = duel_generation(teams, rng)
-        .map(|(equal, opposite)| Duel {
-            equal,
-            opposite,
-            _phantom: PhantomData,
-        })
-        .collect();
+    assert_eq!(teams.len(), 4); // Remove bound checking
 
-    gen_duels.shuffle(rng);
+    let team1 = teams[0];
+    let team2 = teams[1];
+    let team3 = teams[2];
+    let team4 = teams[3];
+
+    let gen_duels = vec![
+        Duel::new(team1, team2),
+        Duel::new(team3, team4),
+        Duel::new(team1, team3),
+        Duel::new(team2, team4),
+        Duel::new(team1, team4),
+        Duel::new(team2, team3),
+    ];
+
+    debug_assert!(duels.is_empty());
     *duels = gen_duels; // duels is empty
 
     Ok(())
-}
-
-fn duel_generation<'a, 'b: 'a, 'r, T: Team, R: Rng>(
-    teams: &'a mut [&'b T],
-    rng: &'r mut R,
-) -> impl Iterator<Item = (&'b T, &'b T)> + use<'a, 'b, 'r, T, R> {
-    teams
-        .iter()
-        .copied()
-        .tuple_combinations()
-        .map(|(t1, t2)| if rng.gen() { (t1, t2) } else { (t2, t1) })
 }
 
 #[cfg(test)]
