@@ -1,3 +1,5 @@
+use crate::{RandGen, Seeder};
+use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::num::NonZero;
 use thiserror::Error;
@@ -21,6 +23,7 @@ pub trait Duel {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 #[non_exhaustive]
 /// Statistics of the group standings.
 pub struct GroupStandingsStatistics {
@@ -29,6 +32,7 @@ pub struct GroupStandingsStatistics {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 #[non_exhaustive]
 /// Statistics of the general standings.
 pub struct GeneralStandingsStatistics {
@@ -74,8 +78,12 @@ impl<D: Duel, T: Team> StandingsBuilder<D, T> {
 
     #[inline]
     /// Evaluates the standings.
-    pub fn evaluate(self, max_duel_points: NonZero<u16>) -> Result<(), StandingsError> {
-        crate::standings::evaluate(self, max_duel_points)
+    pub fn evaluate(
+        self,
+        max_duel_points: NonZero<u16>,
+        seeder: Seeder,
+    ) -> Result<(), StandingsError> {
+        crate::standings::evaluate(self, max_duel_points, seeder)
     }
 }
 
@@ -160,6 +168,7 @@ struct DuelData {
 fn evaluate<D: Duel, T: Team>(
     mut builder: StandingsBuilder<D, T>,
     max_duel_points: NonZero<u16>,
+    mut seeder: Seeder,
 ) -> Result<(), StandingsError> {
     for group in &mut builder.groups {
         for (duel, duel_data) in &mut group.duels {
@@ -180,7 +189,10 @@ fn evaluate<D: Duel, T: Team>(
         }
     }
 
+    let mut rng: RandGen = seeder.make_rng();
+
     let mut indexes = (0..builder.teams.len()).collect::<Vec<_>>();
+    indexes.shuffle(&mut rng);
     indexes.sort_by(|&i1, &i2| {
         let (_, team_data_1) = &builder.teams[i1];
         let size_1 = (builder.groups[team_data_1.group].size - 1) as f64;
@@ -283,6 +295,7 @@ impl<D: Duel> Duel for &mut D {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::gen_seeder;
     use std::fmt::{Display, Formatter};
 
     const MAX_POINTS: u16 = 5;
@@ -291,21 +304,40 @@ mod test {
     fn test_standings() {
         // Run with --nocapture
 
-        let mut team_a = ConcreteTeam::new("A");
-        let mut team_b = ConcreteTeam::new("B");
-        let mut team_c = ConcreteTeam::new("C");
-        let mut team_d = ConcreteTeam::new("D");
-        let mut team_e = ConcreteTeam::new("E");
-        let mut team_f = ConcreteTeam::new("F");
-        let mut team_g = ConcreteTeam::new("G");
-        let mut team_h = ConcreteTeam::new("H");
+        let mut teams = test_teams();
+        let builder = make_builder(&mut teams);
+        builder
+            .evaluate(NonZero::new(MAX_POINTS).unwrap(), gen_seeder())
+            .unwrap();
 
+        for team in teams {
+            println!("{}", team);
+        }
+    }
+
+    fn test_teams() -> [ConcreteTeam; 8] {
+        [
+            ConcreteTeam::new("A"),
+            ConcreteTeam::new("B"),
+            ConcreteTeam::new("C"),
+            ConcreteTeam::new("D"),
+            ConcreteTeam::new("E"),
+            ConcreteTeam::new("F"),
+            ConcreteTeam::new("G"),
+            ConcreteTeam::new("H"),
+        ]
+    }
+
+    fn make_builder(
+        teams: &mut [ConcreteTeam; 8],
+    ) -> StandingsBuilder<ConcreteDuel, &mut ConcreteTeam> {
+        let mut teams = teams.iter_mut();
         let mut builder = StandingsBuilder::new();
         builder.add_group(|builder| {
-            let team0 = builder.add_team(&mut team_a);
-            let team1 = builder.add_team(&mut team_b);
-            let team2 = builder.add_team(&mut team_c);
-            let team3 = builder.add_team(&mut team_d);
+            let team0 = builder.add_team(teams.next().unwrap());
+            let team1 = builder.add_team(teams.next().unwrap());
+            let team2 = builder.add_team(teams.next().unwrap());
+            let team3 = builder.add_team(teams.next().unwrap());
             builder.add_duel(team0, team1, ConcreteDuel::new(5, 1));
             builder.add_duel(team0, team2, ConcreteDuel::new(5, 2));
             builder.add_duel(team0, team3, ConcreteDuel::new(5, 3));
@@ -314,10 +346,10 @@ mod test {
             builder.add_duel(team2, team3, ConcreteDuel::new(6, 4));
         });
         builder.add_group(|builder| {
-            let team0 = builder.add_team(&mut team_e);
-            let team1 = builder.add_team(&mut team_f);
-            let team2 = builder.add_team(&mut team_g);
-            let team3 = builder.add_team(&mut team_h);
+            let team0 = builder.add_team(teams.next().unwrap());
+            let team1 = builder.add_team(teams.next().unwrap());
+            let team2 = builder.add_team(teams.next().unwrap());
+            let team3 = builder.add_team(teams.next().unwrap());
             builder.add_duel(team0, team1, ConcreteDuel::new(5, 2));
             builder.add_duel(team0, team2, ConcreteDuel::new(5, 3));
             builder.add_duel(team0, team3, ConcreteDuel::new(6, 4));
@@ -325,19 +357,10 @@ mod test {
             builder.add_duel(team1, team3, ConcreteDuel::new(6, 4));
             builder.add_duel(team2, team3, ConcreteDuel::new(7, 5));
         });
-        builder.evaluate(NonZero::new(MAX_POINTS).unwrap()).unwrap();
-
-        println!("{}", team_a);
-        println!("{}", team_b);
-        println!("{}", team_c);
-        println!("{}", team_d);
-        println!("{}", team_e);
-        println!("{}", team_f);
-        println!("{}", team_g);
-        println!("{}", team_h);
+        builder
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq)]
     struct ConcreteTeam {
         name: &'static str,
         group_pos_data: Option<(i32, GroupStandingsStatistics)>,
@@ -393,7 +416,7 @@ mod test {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq)]
     struct ConcreteDuel {
         equal_points: i32,
         opposite_points: i32,
@@ -415,6 +438,25 @@ mod test {
 
         fn opposite_points(&self) -> i32 {
             self.opposite_points
+        }
+    }
+
+    #[test]
+    fn test_reproducibility() {
+        let seed = "hello";
+
+        let mut teams = test_teams();
+        make_builder(&mut teams)
+            .evaluate(NonZero::new(MAX_POINTS).unwrap(), Seeder::from(seed))
+            .unwrap();
+
+        for _ in 0..50 {
+            let mut teams_clone = test_teams();
+            make_builder(&mut teams_clone)
+                .evaluate(NonZero::new(MAX_POINTS).unwrap(), Seeder::from(seed))
+                .unwrap();
+
+            assert_eq!(teams, teams_clone);
         }
     }
 }

@@ -10,7 +10,10 @@ publish = false
 [dependencies]
 itertools = "0.14.0"
 rand = "0.8.5"
+rand_pcg = "0.3.1"
+rand_seeder = "0.3.0"
 serde = { version = "1.0", features = ["derive"] }
+indexmap = "2.7.0"
 thiserror = "2.0.7"
 
 [dev-dependencies]

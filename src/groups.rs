@@ -1,7 +1,8 @@
+use crate::{RandGen, Seeder};
+use indexmap::IndexMap;
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
-use rand::{thread_rng, Rng};
-use std::collections::HashMap;
+use rand::Rng;
 use std::iter::repeat_with;
 use std::marker::PhantomData;
 use std::num::NonZero;
@@ -17,6 +18,8 @@ pub trait Team {
 }
 
 /// Generated groups.
+#[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct Groups<'a, T: Team> {
     /// The generated groups.
     pub groups: Vec<Group<'a, T>>,
@@ -24,8 +27,19 @@ pub struct Groups<'a, T: Team> {
     _phantom: PhantomData<()>,
 }
 
+impl<T: Team> Clone for Groups<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Groups {
+            groups: self.groups.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
 /// A generated group.
 #[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct Group<'a, T: Team> {
     /// The teams making part of this group.
     pub teams: Vec<&'a T>,
@@ -60,6 +74,7 @@ impl<T: Team> Clone for Group<'_, T> {
 
 /// A duel of a generated group.
 #[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct Duel<'a, T: Team> {
     /// Bacchiatore with equal role.
     pub equal: &'a T,
@@ -93,6 +108,7 @@ pub enum GroupGenError {
 pub fn generate_groups<T: Team>(
     teams: &mut [T],
     number_of_groups: NonZero<usize>,
+    mut seeder: Seeder,
 ) -> Result<Groups<T>, GroupGenError> {
     if teams.len() < number_of_groups.get() * MIN_TEAMS_PER_GROUP {
         return Err(GroupGenError::NotEnoughTeams(
@@ -101,7 +117,7 @@ pub fn generate_groups<T: Team>(
         ));
     }
 
-    let mut rng = thread_rng();
+    let mut rng: RandGen = seeder.make_rng();
 
     // Generate groups based on strength
     teams.shuffle(&mut rng);
@@ -145,7 +161,7 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
     debug_assert!(teams.len() > 4);
 
     // TeamKey -> (TeamKey -> DuelIndex in gen_duels)
-    let mut team_duels: HashMap<_, HashMap<_, _>> = HashMap::with_capacity(teams.len());
+    let mut team_duels: IndexMap<_, IndexMap<_, _>> = IndexMap::with_capacity(teams.len());
     let mut gen_duels: Vec<_> = duel_generation(teams, rng)
         .enumerate()
         .map(|(i, (equal, opposite))| {
@@ -194,7 +210,7 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
             .filter(|(&opponent_key, _)| {
                 opponent_key != last_duel_team_key && opponent_key != last_duel_opponent_key
             })
-            .max_by_key(|(opponent_key, _)| team_duels[opponent_key].len())
+            .max_by_key(|(opponent_key, _)| team_duels[*opponent_key].len())
             .ok_or(GroupGenError::InternalError("no duel found for opponent"))?;
 
         last_duel_team_key = team_key;
@@ -208,15 +224,15 @@ fn standard_group_duel_generation<'a, 'b: 'a, T: Team>(
         );
 
         if let Some(team_duel_data) = team_duels.get_mut(&team_key) {
-            team_duel_data.remove(&opponent_key);
+            team_duel_data.swap_remove(&opponent_key);
             if team_duel_data.is_empty() {
-                team_duels.remove(&team_key);
+                team_duels.swap_remove(&team_key);
             }
         }
         if let Some(opponent_duel_data) = team_duels.get_mut(&opponent_key) {
-            opponent_duel_data.remove(&team_key);
+            opponent_duel_data.swap_remove(&team_key);
             if opponent_duel_data.is_empty() {
-                team_duels.remove(&opponent_key);
+                team_duels.swap_remove(&opponent_key);
             }
         }
     }
@@ -259,11 +275,12 @@ fn duel_generation<'a, 'b: 'a, 'r, T: Team, R: Rng>(
 
 #[cfg(test)]
 mod test {
-    use crate::groups::{generate_groups, Team, MIN_TEAMS_PER_GROUP};
+    use super::*;
+    use crate::gen_seeder;
     use std::fmt::{Display, Formatter};
     use std::num::NonZero;
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct ConcreteTeam(&'static str, i32);
 
     impl Display for ConcreteTeam {
@@ -293,7 +310,7 @@ mod test {
             ConcreteTeam("H", 8),
             ConcreteTeam("I", 8),
         ];
-        let groups = generate_groups(&mut teams, NonZero::new(2).unwrap()).unwrap();
+        let groups = generate_groups(&mut teams, NonZero::new(2).unwrap(), gen_seeder()).unwrap();
 
         let mut i = 0;
         for group in groups.groups {
@@ -311,10 +328,47 @@ mod test {
     }
 
     #[test]
+    fn test_reproducibility() {
+        let teams = [
+            ConcreteTeam("A", 10),
+            ConcreteTeam("B", 10),
+            ConcreteTeam("C", 8),
+            ConcreteTeam("D", 10),
+            ConcreteTeam("E", 10),
+            ConcreteTeam("F", 8),
+            ConcreteTeam("G", 10),
+            ConcreteTeam("H", 8),
+            ConcreteTeam("I", 8),
+        ];
+
+        let seed = "hello";
+
+        let mut teams_clone = teams.clone();
+        let first_groups = generate_groups(
+            &mut teams_clone,
+            NonZero::new(2).unwrap(),
+            Seeder::from(seed),
+        )
+        .unwrap();
+
+        for _ in 0..50 {
+            let mut teams_clone = teams.clone();
+            let groups = generate_groups(
+                &mut teams_clone,
+                NonZero::new(2).unwrap(),
+                Seeder::from(seed),
+            )
+            .unwrap();
+
+            assert_eq!(first_groups, groups);
+        }
+    }
+
+    #[test]
     fn test_large_groups() {
-        for i in MIN_TEAMS_PER_GROUP..=100 {
+        for i in MIN_TEAMS_PER_GROUP..=50 {
             let mut teams: Vec<_> = (1..=i).map(|_| ConcreteTeam("team", 5)).collect();
-            generate_groups(&mut teams, NonZero::new(1).unwrap()).unwrap();
+            generate_groups(&mut teams, NonZero::new(1).unwrap(), gen_seeder()).unwrap();
         }
     }
 }

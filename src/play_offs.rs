@@ -6,6 +6,8 @@ use thiserror::Error;
 pub const MIN_TEAMS: usize = 4;
 
 /// A play-off duel.
+#[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PlayOffsDuel<T> {
     /// The equal team. [`None`] if the opposite team automatically passes the turn.
     pub equal: Option<T>,
@@ -201,10 +203,9 @@ mod test {
     fn test_play_offs() {
         // Run with --nocapture
 
-        let play_offs = generate_play_offs(vec![
-            "A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "M",
-        ])
-        .unwrap();
+        let play_offs =
+            generate_play_offs(vec!["A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "M"])
+                .unwrap();
 
         let mut i = 1usize;
         for play_off in play_offs {
@@ -223,6 +224,18 @@ mod test {
             } else {
                 println!("-");
             }
+        }
+    }
+
+    #[test]
+    fn test_reproducibility() {
+        let teams: Vec<_> = (0..100).collect();
+        let play_offs = generate_play_offs(teams.clone()).unwrap();
+
+        for _ in 0..50 {
+            let other_play_offs = generate_play_offs(teams.clone()).unwrap();
+
+            assert_eq!(play_offs, other_play_offs);
         }
     }
 
