@@ -1,6 +1,7 @@
 use crate::{RandGen, Seeder};
 use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::num::NonZero;
 use thiserror::Error;
 
@@ -27,8 +28,8 @@ pub trait Duel {
 #[non_exhaustive]
 /// Statistics of the group standings.
 pub struct GroupStandingsStatistics {
-    wins: usize,
-    points_difference: i32,
+    wins: String,
+    points_difference: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -223,8 +224,8 @@ fn evaluate<D: Duel, T: Team>(
                 .try_into()
                 .map_err(|_| StandingsError::InternalError("couldn't convert index to i32"))?,
             GeneralStandingsStatistics {
-                wins: format_percentages(wins),
-                points_difference: format_percentages(points),
+                wins: format_percentages(wins, false),
+                points_difference: format_percentages(points, true),
             },
         );
 
@@ -234,8 +235,8 @@ fn evaluate<D: Duel, T: Team>(
                 StandingsError::InternalError("couldn't convert last_position to i32")
             })?,
             GroupStandingsStatistics {
-                wins: team.1.wins,
-                points_difference: team.1.points,
+                wins: format_number(team.1.wins, false),
+                points_difference: format_number(team.1.points, true),
             },
         );
     }
@@ -250,8 +251,21 @@ fn advantage<D: Duel>(duel: &mut D, max_duel_points: NonZero<u16>) -> bool {
 }
 
 #[inline]
-fn format_percentages(percentage: f64) -> String {
-    format!("{:.2}%", percentage * 100.0)
+fn format_number<N: Display>(number: N, always_show_sign: bool) -> String {
+    if always_show_sign {
+        format!("{:+}", number)
+    } else {
+        format!("{}", number)
+    }
+}
+
+#[inline]
+fn format_percentages(percentage: f64, always_show_sign: bool) -> String {
+    if always_show_sign {
+        format!("{:+.2}%", percentage * 100.0)
+    } else {
+        format!("{:.2}%", percentage * 100.0)
+    }
 }
 
 // TRAIT DEFAULT IMPLEMENTATIONS
