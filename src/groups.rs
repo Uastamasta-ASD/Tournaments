@@ -121,7 +121,7 @@ pub fn generate_groups<T: Team>(
     teams: &mut [T],
     number_of_groups: NonZero<usize>,
     mut seeder: Seeder,
-) -> Result<Groups<T>, GroupGenError> {
+) -> Result<Groups<'_, T>, GroupGenError> {
     if teams.len() < number_of_groups.get() * MIN_TEAMS_PER_GROUP {
         return Err(GroupGenError::NotEnoughTeams(
             number_of_groups.get() * MIN_TEAMS_PER_GROUP,
