@@ -470,6 +470,7 @@ mod test {
 
     impl Team for ConcreteTeam {
         fn final_position_callback(&mut self, position: i32) {
+            assert!(self.final_position.is_none());
             self.final_position = Some(position);
         }
 
