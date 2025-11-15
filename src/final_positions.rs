@@ -119,6 +119,12 @@ pub enum FinalPositionsError {
     /// Not enough play-offs tree levels to calculate the final positions (see [`MIN_PLAY_OFFS_TREE_LEVELS`]).
     #[error("not enough play-offs tree levels to calculate the final positions ({0} needed, but {1} were provided)")]
     NotEnoughPlayOffsTreeLevels(usize, usize),
+    /// Invalid final duel (see [`MIN_TEAMS`]).
+    #[error("wrong number of final duels (1 expected, but {0} were provided)")]
+    InvalidFinalDuel(usize),
+    /// Invalid semifinal duels (see [`MIN_TEAMS`]).
+    #[error("wrong number of semifinal duels (2 expected, but {0} were provided)")]
+    InvalidSemifinalDuels(usize),
     /// An error occurred while calculating the final positions.
     #[error("an error occurred while calculating final positions: {0}")]
     InternalError(&'static str),
@@ -130,7 +136,7 @@ pub struct FinalPositionTeam {
     index: usize,
 }
 
-pub fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
+fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
     mut builder: FinalPositionsBuilder<D, DUELS, TFD, T>,
 ) -> Result<(), FinalPositionsError> {
     if builder.teams.len() < MIN_TEAMS {
@@ -143,16 +149,24 @@ pub fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
     let mut teams = VecHelper(builder.teams);
     let mut play_off_results = builder.play_offs_duels.iter_mut().rev().map(|level| level.as_mut());
     let Some(tfp_duel) = builder.third_fourth_duel else {
-        unreachable!()
+        unreachable!("third_fourth_duel is always set before evaluate can be called")
     };
 
     // Final and semifinals (we don't actually need semifinals, 3/4th place is enough)
-    let (Some([final_duel]), Some(_)) = (play_off_results.next(), play_off_results.next()) else {
+    let (Some(final_duel), Some(semifinals)) = (play_off_results.next(), play_off_results.next()) else {
         return Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(
             MIN_PLAY_OFFS_TREE_LEVELS,
             builder.play_offs_duels.len(),
         ));
     };
+
+    let [final_duel] = final_duel else {
+        return Err(FinalPositionsError::InvalidFinalDuel(final_duel.len()));
+    };
+
+    if semifinals.len() != 2 {
+        return Err(FinalPositionsError::InvalidSemifinalDuels(semifinals.len()));
+    }
 
     if final_duel.equal_points() > final_duel.opposite_points() {
         teams.get_mut(final_duel.equal())?.final_position_callback(1);
