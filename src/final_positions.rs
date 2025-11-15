@@ -2,6 +2,19 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use thiserror::Error;
 
+/// Minimum number of teams to calculate the final positions.
+pub const MIN_TEAMS: usize = 4;
+
+/// Minimum number of levels of the play-offs tree to calculate the final positions.
+pub const MIN_PLAY_OFFS_TREE_LEVELS: usize = 2;
+
+const _: () = {
+    assert!(
+        MIN_TEAMS >= MIN_PLAY_OFFS_TREE_LEVELS,
+        "MIN_TEAMS is less than MIN_PLAY_OFFS_TREE_LEVELS"
+    );
+};
+
 /// A team.
 pub trait Team {
     /// Called at the end of the final position calculation with the team's position.
@@ -97,9 +110,16 @@ impl<T: Team> DuelsBuilder<'_, T> {
 }
 
 #[derive(Error, Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 #[non_exhaustive]
 pub enum FinalPositionsError {
-    /// An error occurred while calculating final positions.
+    /// Not enough teams to calculate the final positions (see [`MIN_TEAMS`]).
+    #[error("not enough teams to calculate the final positions ({0} needed, but {1} were provided)")]
+    NotEnoughTeams(usize, usize),
+    /// Not enough play-offs tree levels to calculate the final positions (see [`MIN_PLAY_OFFS_TREE_LEVELS`]).
+    #[error("not enough play-offs tree levels to calculate the final positions ({0} needed, but {1} were provided)")]
+    NotEnoughPlayOffsTreeLevels(usize, usize),
+    /// An error occurred while calculating the final positions.
     #[error("an error occurred while calculating final positions: {0}")]
     InternalError(&'static str),
 }
@@ -113,18 +133,24 @@ pub struct FinalPositionTeam {
 pub fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
     mut builder: FinalPositionsBuilder<D, DUELS, TFD, T>,
 ) -> Result<(), FinalPositionsError> {
+    if builder.teams.len() < MIN_TEAMS {
+        return Err(FinalPositionsError::NotEnoughTeams(
+            MIN_TEAMS,
+            builder.teams.len(),
+        ));
+    }
+
     let mut teams = VecHelper(builder.teams);
     let mut play_off_results = builder.play_offs_duels.iter_mut().rev().map(|level| level.as_mut());
     let Some(tfp_duel) = builder.third_fourth_duel else {
-        return Err(FinalPositionsError::InternalError(
-            "No third fourth place duel found",
-        ));
+        unreachable!()
     };
 
     // Final and semifinals (we don't actually need semifinals, 3/4th place is enough)
     let (Some([final_duel]), Some(_)) = (play_off_results.next(), play_off_results.next()) else {
-        return Err(FinalPositionsError::InternalError(
-            "There are not enough play offs duels",
+        return Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(
+            MIN_PLAY_OFFS_TREE_LEVELS,
+            builder.play_offs_duels.len(),
         ));
     };
 
@@ -329,45 +355,11 @@ mod test {
         // Run with --nocapture
 
         let mut teams = test_teams();
-        let builder = make_builder(&mut teams);
-        builder.evaluate().unwrap();
-
-        teams.sort_by_key(|t| t.final_position);
-        for team in teams {
-            println!("{}", team);
-        }
-    }
-
-    fn test_teams() -> [ConcreteTeam; 9] {
-       [
-            ConcreteTeam::new("A", 1),
-            ConcreteTeam::new("B", 2),
-            ConcreteTeam::new("C", 3),
-            ConcreteTeam::new("D", 4),
-            ConcreteTeam::new("E", 5),
-            ConcreteTeam::new("F", 6),
-            // Teams outside play-offs
-            ConcreteTeam::new("X", 7),
-            ConcreteTeam::new("Y", 8),
-            ConcreteTeam::new("Z", 9),
-        ]
-    }
-
-    fn make_builder(
-        teams: &mut [ConcreteTeam; 9],
-    ) -> FinalPositionsBuilder<ConcreteDuel, Vec<ConcreteDuel>, ConcreteDuel, &mut ConcreteTeam> {
-        teams.shuffle(&mut thread_rng());
-        let builder = FinalPositionsBuilder::new(|builder| {
-            let teams: Vec<_> = teams.iter_mut().map(|t| (t.group_final_position, builder.add_team(t))).collect();
-            let &[a, b, c, d, e, f, ..] = &*teams
-                .iter()
-                // Sort the iterator to make sure we build the intended play-offs tree for the test
-                .sorted_unstable_by_key(|t| t.0)
-                .map(|t| t.1)
-                .collect::<Vec<_>>()
-            else {
+        let builder = make_builder(&mut teams, |teams| {
+            let &[a, b, c, d, e, f, ..] = teams else {
                 unreachable!();
             };
+
             (
                 vec![
                     vec![
@@ -387,6 +379,61 @@ mod test {
                 ConcreteDuel::new(e, b, 0, 10)
             )
         });
+        builder.evaluate().unwrap();
+
+        teams.sort_by_key(|t| t.final_position);
+        for team in teams {
+            println!("{}", team);
+        }
+    }
+
+    #[test]
+    fn invalid_duels() {
+        assert!(MIN_TEAMS < const { test_teams().len() });
+
+        for i in 0..MIN_PLAY_OFFS_TREE_LEVELS {
+            let mut teams = test_teams();
+            let builder = make_builder(&mut teams, |_| {
+                let levels: Vec<_> = (1..(i + 1)).map(|level_size| {
+                    // Generate level
+                    (0..level_size).map(|_| ConcreteDuel::new_bye(None, None)).collect()
+                }).collect();
+                (levels, ConcreteDuel::new_bye(None, None))
+            });
+            assert_eq!(builder.evaluate(), Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(MIN_PLAY_OFFS_TREE_LEVELS, i)));
+        }
+    }
+
+    const fn test_teams() -> [ConcreteTeam; 9] {
+       [
+            ConcreteTeam::new("A", 1),
+            ConcreteTeam::new("B", 2),
+            ConcreteTeam::new("C", 3),
+            ConcreteTeam::new("D", 4),
+            ConcreteTeam::new("E", 5),
+            ConcreteTeam::new("F", 6),
+            // Teams outside play-offs
+            ConcreteTeam::new("X", 7),
+            ConcreteTeam::new("Y", 8),
+            ConcreteTeam::new("Z", 9),
+        ]
+    }
+
+    fn make_builder(
+        teams: &mut [ConcreteTeam; 9],
+        f: impl for<'a> FnOnce(&'a [FinalPositionTeam]) -> (Vec<Vec<ConcreteDuel>>, ConcreteDuel)
+    ) -> FinalPositionsBuilder<ConcreteDuel, Vec<ConcreteDuel>, ConcreteDuel, &mut ConcreteTeam> {
+        teams.shuffle(&mut thread_rng());
+        let builder = FinalPositionsBuilder::new(|builder| {
+            let teams: Vec<_> = teams
+                .iter_mut()
+                .map(|t| (t.group_final_position, builder.add_team(t)))
+                // Sort the iterator to make sure we build the intended play-offs tree for the test
+                .sorted_unstable_by_key(|t| t.0)
+                .map(|t| t.1)
+                .collect();
+            f(&teams)
+        });
         builder
     }
 
@@ -398,7 +445,7 @@ mod test {
     }
 
     impl ConcreteTeam {
-        fn new(name: &'static str, group_final_position: i32) -> Self {
+        const fn new(name: &'static str, group_final_position: i32) -> Self {
             ConcreteTeam {
                 name,
                 group_final_position,

@@ -6,7 +6,7 @@ pub mod play_offs;
 pub mod final_positions;
 
 /// Minimum number of teams in a tournament.
-pub const MIN_TEAMS_TOURNAMENT: usize = max(groups::MIN_TEAMS_PER_GROUP, play_offs::MIN_TEAMS);
+pub const MIN_TEAMS_TOURNAMENT: usize = max(max(groups::MIN_TEAMS_PER_GROUP, play_offs::MIN_TEAMS), final_positions::MIN_TEAMS);
 
 /// Seeder used to seed the RNG. Use the same seed to get reproducible results.
 pub type Seeder = rand_seeder::Seeder;
