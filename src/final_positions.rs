@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use thiserror::Error;
 
 /// Minimum number of teams to calculate the final positions.
-pub const MIN_TEAMS: usize = 4;
+pub const MIN_TEAMS: usize = 3;
 
 /// Minimum number of levels of the play-offs tree to calculate the final positions.
 pub const MIN_PLAY_OFFS_TREE_LEVELS: usize = 2;
@@ -41,11 +41,9 @@ pub trait Duel {
 
     /// Points made by the opposite team.
     fn opposite_points(&self) -> Option<i32>;
-}
 
-/// A PlayOffs duel.
-pub trait PlayOffsDuel: Duel {
     /// Returns whether the duel is a bye.
+    #[inline]
     fn is_bye(&self) -> bool {
         self.equal().is_none() || self.opposite().is_none()
     }
@@ -53,14 +51,14 @@ pub trait PlayOffsDuel: Duel {
 
 #[derive(Debug)]
 /// Final positions calculation builder.
-pub struct FinalPositionsBuilder<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team> {
+pub struct FinalPositionsBuilder<D: Duel, DUELS: AsMut<[D]>, TFD: Duel, T: Team> {
     teams: Vec<T>,
     play_offs_duels: Vec<DUELS>,
     third_fourth_duel: Option<TFD>,
     _phantom: PhantomData<[D]>,
 }
 
-impl<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team> FinalPositionsBuilder<D, DUELS, TFD, T> {
+impl<D: Duel, DUELS: AsMut<[D]>, TFD: Duel, T: Team> FinalPositionsBuilder<D, DUELS, TFD, T> {
     /// Creates a new `FinalPositionsBuilder`.
     ///
     /// Returns a tuple containing the play-offs tree (divided in levels) and the 3rd-4th place duel.
@@ -136,7 +134,7 @@ pub struct FinalPositionTeam {
     index: usize,
 }
 
-fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
+fn evaluate<D: Duel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
     mut builder: FinalPositionsBuilder<D, DUELS, TFD, T>,
 ) -> Result<(), FinalPositionsError> {
     if builder.teams.len() < MIN_TEAMS {
@@ -146,45 +144,37 @@ fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
         ));
     }
 
-    let mut teams = VecHelper(builder.teams);
-    let mut play_off_results = builder.play_offs_duels.iter_mut().rev().map(|level| level.as_mut());
-    let Some(tfp_duel) = builder.third_fourth_duel else {
-        unreachable!("third_fourth_duel is always set before evaluate can be called")
-    };
-
-    // Final and semifinals (we don't actually need semifinals, 3/4th place is enough)
-    let (Some(final_duel), Some(semifinals)) = (play_off_results.next(), play_off_results.next()) else {
+    if builder.play_offs_duels.len() < MIN_PLAY_OFFS_TREE_LEVELS {
         return Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(
             MIN_PLAY_OFFS_TREE_LEVELS,
             builder.play_offs_duels.len(),
         ));
+    }
+
+    let mut teams = VecHelper(builder.teams);
+    let mut play_off_results = builder.play_offs_duels.iter_mut().rev().map(|level| level.as_mut());
+    let Some(mut tfp_duel) = builder.third_fourth_duel else {
+        unreachable!("third_fourth_duel is always set before evaluate can be called")
     };
 
-    let [final_duel] = final_duel else {
-        return Err(FinalPositionsError::InvalidFinalDuel(final_duel.len()));
+    handle_first_two_places(
+        &mut teams,
+        &mut play_off_results,
+    )?;
+
+    let mut pos = if tfp_duel.is_bye() {
+        // Third-fourth duel is a bye only if there are 3 teams competing (there are just final and semifinals)
+        // First and second places have been already handled, nothing more to do here
+        3
+    } else {
+        handle_third_fourth_places(
+            &mut teams,
+            &mut play_off_results,
+            &mut tfp_duel,
+        )?;
+        5
     };
 
-    if semifinals.len() != 2 {
-        return Err(FinalPositionsError::InvalidSemifinalDuels(semifinals.len()));
-    }
-
-    if final_duel.equal_points() > final_duel.opposite_points() {
-        teams.get_mut(final_duel.equal())?.final_position_callback(1);
-        teams.get_mut(final_duel.opposite())?.final_position_callback(2);
-    } else {
-        teams.get_mut(final_duel.equal())?.final_position_callback(2);
-        teams.get_mut(final_duel.opposite())?.final_position_callback(1);
-    }
-
-    if tfp_duel.equal_points() > tfp_duel.opposite_points() {
-        teams.get_mut(tfp_duel.equal())?.final_position_callback(3);
-        teams.get_mut(tfp_duel.opposite())?.final_position_callback(4);
-    } else {
-        teams.get_mut(tfp_duel.equal())?.final_position_callback(4);
-        teams.get_mut(tfp_duel.opposite())?.final_position_callback(3);
-    }
-
-    let mut pos = 5;
     for level in play_off_results {
         // One of the two players already has a final position
         #[cfg(debug_assertions)]
@@ -240,6 +230,54 @@ fn evaluate<D: PlayOffsDuel, DUELS: AsMut<[D]>, TFD: Duel, T: Team>(
             team.final_position_callback(pos);
             pos += 1;
         }
+    }
+
+    Ok(())
+}
+
+fn handle_first_two_places<'d, 't, 'it, 'tfp, D: Duel + 'd, T: Team>(
+    teams: &'t mut VecHelper<T>,
+    play_off_results: &'it mut impl Iterator<Item = &'d mut [D]>,
+) -> Result<(), FinalPositionsError> {
+    let Some(final_duel) = play_off_results.next() else {
+        return Err(FinalPositionsError::InternalError("final duel not found"));
+    };
+
+    let [final_duel] = final_duel else {
+        return Err(FinalPositionsError::InvalidFinalDuel(final_duel.len()));
+    };
+
+    if final_duel.equal_points() > final_duel.opposite_points() {
+        teams.get_mut(final_duel.equal())?.final_position_callback(1);
+        teams.get_mut(final_duel.opposite())?.final_position_callback(2);
+    } else {
+        teams.get_mut(final_duel.equal())?.final_position_callback(2);
+        teams.get_mut(final_duel.opposite())?.final_position_callback(1);
+    }
+
+    Ok(())
+}
+
+fn handle_third_fourth_places<'d, 't, 'it, 'tfp, D: Duel + 'd, TFD: Duel, T: Team>(
+    teams: &'t mut VecHelper<T>,
+    play_off_results: &'it mut impl Iterator<Item = &'d mut [D]>,
+    tfp_duel: &'tfp mut TFD,
+) -> Result<(), FinalPositionsError> {
+    // Final and semifinals (we don't actually need semifinals, 3/4th place is enough)
+    let Some(semifinals) = play_off_results.next() else {
+        return Err(FinalPositionsError::InternalError("semifinal duels not found"));
+    };
+
+    if semifinals.len() != 2 {
+        return Err(FinalPositionsError::InvalidSemifinalDuels(semifinals.len()));
+    }
+
+    if tfp_duel.equal_points() > tfp_duel.opposite_points() {
+        teams.get_mut(tfp_duel.equal())?.final_position_callback(3);
+        teams.get_mut(tfp_duel.opposite())?.final_position_callback(4);
+    } else {
+        teams.get_mut(tfp_duel.equal())?.final_position_callback(4);
+        teams.get_mut(tfp_duel.opposite())?.final_position_callback(3);
     }
 
     Ok(())
@@ -318,9 +356,7 @@ impl<D: Duel> Duel for &D {
     fn opposite_points(&self) -> Option<i32> {
         (**self).opposite_points()
     }
-}
 
-impl<D: PlayOffsDuel> PlayOffsDuel for &D {
     #[inline]
     fn is_bye(&self) -> bool {
         (**self).is_bye()
@@ -347,9 +383,7 @@ impl<D: Duel> Duel for &mut D {
     fn opposite_points(&self) -> Option<i32> {
         (**self).opposite_points()
     }
-}
 
-impl<D: PlayOffsDuel> PlayOffsDuel for &mut D {
     #[inline]
     fn is_bye(&self) -> bool {
         (**self).is_bye()
@@ -402,6 +436,37 @@ mod test {
     }
 
     #[test]
+    fn test_final_positions_three_teams() {
+        // Run with --nocapture
+
+        let mut teams = test_teams();
+        let builder = make_builder(&mut teams, |teams| {
+            let &[a, b, c, ..] = teams else {
+                unreachable!();
+            };
+
+            (
+                vec![
+                    vec![
+                        ConcreteDuel::new_bye(Some(a), None),
+                        ConcreteDuel::new(c, b, 0, 10),
+                    ],
+                    vec![
+                        ConcreteDuel::new(a, b, 10, 0),
+                    ]
+                ],
+                ConcreteDuel::new_bye(None, Some(c))
+            )
+        });
+        builder.evaluate().unwrap();
+
+        teams.sort_by_key(|t| t.final_position);
+        for team in teams {
+            println!("{}", team);
+        }
+    }
+
+    #[test]
     fn invalid_duels() {
         assert!(MIN_TEAMS < const { test_teams().len() });
 
@@ -414,7 +479,10 @@ mod test {
                 }).collect();
                 (levels, ConcreteDuel::new_bye(None, None))
             });
-            assert_eq!(builder.evaluate(), Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(MIN_PLAY_OFFS_TREE_LEVELS, i)));
+            assert_eq!(
+                builder.evaluate(),
+                Err(FinalPositionsError::NotEnoughPlayOffsTreeLevels(MIN_PLAY_OFFS_TREE_LEVELS, i))
+            );
         }
     }
 
@@ -546,8 +614,5 @@ mod test {
         fn opposite_points(&self) -> Option<i32> {
             self.opposite_points
         }
-    }
-
-    impl PlayOffsDuel for ConcreteDuel {
     }
 }

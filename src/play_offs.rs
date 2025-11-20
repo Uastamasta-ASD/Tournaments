@@ -3,7 +3,7 @@ use std::mem;
 use thiserror::Error;
 
 /// Minimum number of teams to generate the play-offs duels.
-pub const MIN_TEAMS: usize = 4;
+pub const MIN_TEAMS: usize = 3;
 
 /// A play-off duel.
 #[derive(Debug)]

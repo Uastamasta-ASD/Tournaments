@@ -10,7 +10,7 @@ use std::num::NonZero;
 use thiserror::Error;
 
 /// Minimum number of teams per group.
-pub const MIN_TEAMS_PER_GROUP: usize = 4;
+pub const MIN_TEAMS_PER_GROUP: usize = 3;
 
 /// A team of a tournament.
 pub trait Team {
@@ -154,8 +154,10 @@ pub fn generate_groups<T: Team>(
 
         if teams.len() > 4 {
             standard_group_duel_generation(teams, duels)?;
-        } else {
+        } else if teams.len() == 4 {
             four_teams_group_duel_generation(teams, duels)?;
+        } else {
+            three_teams_group_duel_generation(teams, duels)?;
         }
 
         // Randomize duel roles
@@ -279,6 +281,31 @@ fn four_teams_group_duel_generation<'a, 'b: 'a, T: Team>(
         Duel::new(team1, team3),
         Duel::new(team2, team4),
         Duel::new(team1, team4),
+        Duel::new(team2, team3),
+    ];
+
+    debug_assert!(duels.is_empty());
+    *duels = gen_duels; // duels is empty
+
+    Ok(())
+}
+
+fn three_teams_group_duel_generation<'a, 'b: 'a, T: Team>(
+    teams: &mut [&'b T],
+    duels: &'a mut Vec<Duel<'b, T>>,
+) -> Result<(), GroupGenError> {
+    // With 3 (or less) teams it's impossible to avoid having two successive
+    // duels don't share any team, so using a predetermined order is better
+
+    assert_eq!(teams.len(), 3); // Remove bound checking
+
+    let team1 = teams[0];
+    let team2 = teams[1];
+    let team3 = teams[2];
+
+    let gen_duels = vec![
+        Duel::new(team1, team2),
+        Duel::new(team1, team3),
         Duel::new(team2, team3),
     ];
 
