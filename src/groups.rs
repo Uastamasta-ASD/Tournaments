@@ -322,6 +322,7 @@ mod test {
     use crate::{gen_seed, gen_seeder};
     use std::fmt::{Display, Formatter};
     use std::num::NonZero;
+    use rand::distributions::{Distribution, Uniform};
 
     #[derive(Debug, Clone, Eq, PartialEq)]
     struct ConcreteTeam(&'static str, i32);
@@ -414,9 +415,24 @@ mod test {
 
     #[test]
     fn test_large_groups() {
+        let strength_distr = Uniform::new_inclusive(0, 10);
+        let mut rng = rand::thread_rng();
         for i in MIN_TEAMS_PER_GROUP..=50 {
-            let mut teams: Vec<_> = (1..=i).map(|_| ConcreteTeam("team", 5)).collect();
+            let mut teams: Vec<_> = (1..=i).map(|_| ConcreteTeam("team", strength_distr.sample(&mut rng))).collect();
+
+            // Test with one large group
             generate_groups(&mut teams, NonZero::new(1).unwrap(), gen_seeder()).unwrap();
+
+            // Test with multiple groups
+            let num_groups = if i <= 5 { 1 } else { i / 5 }; // Try to keep around 4/5 teams per group
+            let groups = generate_groups(&mut teams, NonZero::new(num_groups).unwrap(), gen_seeder()).unwrap();
+
+            // Make sure the teams with more players are the first ones
+            let mut max_size = usize::MAX;
+            for group in groups.groups {
+                assert!(group.teams.len() <= max_size);
+                max_size = group.teams.len();
+            }
         }
     }
 }
