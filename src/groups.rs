@@ -142,6 +142,7 @@ pub fn generate_groups<T: Team>(
         match iter.next() {
             Some(group) => group.teams.push(team),
             None => {
+                groups.shuffle(&mut rng); // Make sure every group has the same probability of being the first one
                 iter = groups.iter_mut();
                 iter.next().unwrap().teams.push(team); // unwrap() should never panic, since number_of_groups is > 0
             }
