@@ -190,7 +190,7 @@ fn evaluate<D: Duel, T: Team>(
         }
     }
 
-    let mut rng: RandGen = seeder.make_rng();
+    let mut rng: RandGen = seeder.into_rng();
 
     let mut indexes = (0..builder.teams.len()).collect::<Vec<_>>();
     indexes.shuffle(&mut rng);

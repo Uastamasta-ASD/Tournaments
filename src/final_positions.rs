@@ -396,7 +396,6 @@ mod test {
     use std::fmt::{Display, Formatter};
     use itertools::Itertools;
     use rand::prelude::SliceRandom;
-    use rand::thread_rng;
 
     #[test]
     fn test_final_positions() {
@@ -505,7 +504,7 @@ mod test {
         teams: &mut [ConcreteTeam; 9],
         f: impl for<'a> FnOnce(&'a [FinalPositionTeam]) -> (Vec<Vec<ConcreteDuel>>, ConcreteDuel)
     ) -> FinalPositionsBuilder<ConcreteDuel, Vec<ConcreteDuel>, ConcreteDuel, &mut ConcreteTeam> {
-        teams.shuffle(&mut thread_rng());
+        teams.shuffle(&mut rand::rng());
         let builder = FinalPositionsBuilder::new(|builder| {
             let teams: Vec<_> = teams
                 .iter_mut()

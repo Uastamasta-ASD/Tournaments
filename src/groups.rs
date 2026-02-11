@@ -2,7 +2,7 @@ use crate::{RandGen, Seeder};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
-use rand::Rng;
+use rand::RngExt;
 use std::iter::repeat_with;
 use std::marker::PhantomData;
 use std::mem;
@@ -129,7 +129,7 @@ pub fn generate_groups<T: Team>(
         ));
     }
 
-    let mut rng: RandGen = seeder.make_rng();
+    let mut rng: RandGen = seeder.into_rng();
 
     // Generate groups based on strength
     teams.shuffle(&mut rng);
@@ -163,7 +163,7 @@ pub fn generate_groups<T: Team>(
 
         // Randomize duel roles
         for duel in duels {
-            if rng.gen() {
+            if rng.random() {
                 mem::swap(&mut duel.equal, &mut duel.opposite);
             }
         }
@@ -322,7 +322,7 @@ mod test {
     use crate::{gen_seed, gen_seeder};
     use std::fmt::{Display, Formatter};
     use std::num::NonZero;
-    use rand::distributions::{Distribution, Uniform};
+    use rand::distr::{Distribution, Uniform};
 
     #[derive(Debug, Clone, Eq, PartialEq)]
     struct ConcreteTeam(&'static str, i32);
@@ -415,8 +415,8 @@ mod test {
 
     #[test]
     fn test_large_groups() {
-        let strength_distr = Uniform::new_inclusive(0, 10);
-        let mut rng = rand::thread_rng();
+        let strength_distr = Uniform::new_inclusive(0, 10).unwrap();
+        let mut rng = rand::rng();
         for i in MIN_TEAMS_PER_GROUP..=50 {
             let mut teams: Vec<_> = (1..=i).map(|_| ConcreteTeam("team", strength_distr.sample(&mut rng))).collect();
 
