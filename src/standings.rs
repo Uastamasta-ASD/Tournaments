@@ -261,6 +261,8 @@ fn format_number<N: Display>(number: N, always_show_sign: bool) -> String {
 
 #[inline]
 fn format_percentages(percentage: f64, always_show_sign: bool) -> String {
+    debug_assert!(percentage.is_nan(), "Percentage is not a number");
+    debug_assert!(percentage.is_infinite(), "Percentage is infinite");
     if always_show_sign {
         format!("{:+.2}%", percentage * 100.0)
     } else {
@@ -320,6 +322,31 @@ mod test {
 
         let mut teams = test_teams();
         let builder = make_builder(&mut teams);
+        builder
+            .evaluate(NonZero::new(MAX_POINTS).unwrap(), gen_seeder())
+            .unwrap();
+
+        for team in teams {
+            println!("{}", team);
+        }
+    }
+
+    #[test]
+    fn test_standings_pathological_group() {
+        // Run with --nocapture
+
+        let mut teams = test_teams();
+        let mut teams_iter = teams.iter_mut();
+        let mut builder = StandingsBuilder::new();
+        builder.add_group(|builder| {
+            let team0 = builder.add_team(teams_iter.next().unwrap());
+            let team1 = builder.add_team(teams_iter.next().unwrap());
+            builder.add_duel(team0, team1, ConcreteDuel::new(MAX_POINTS.into(), 1));
+        });
+        builder.add_group(|builder| {
+            let _team0 = builder.add_team(teams_iter.next().unwrap());
+        });
+        builder.add_group(|_builder| {});
         builder
             .evaluate(NonZero::new(MAX_POINTS).unwrap(), gen_seeder())
             .unwrap();
@@ -397,6 +424,7 @@ mod test {
             position: i32,
             statistics: GroupStandingsStatistics,
         ) {
+            assert!(position > 0, "Negative position for team {}", self.name);
             self.group_pos_data = Some((position, statistics));
         }
 
@@ -405,6 +433,7 @@ mod test {
             position: i32,
             statistics: GeneralStandingsStatistics,
         ) {
+            assert!(position > 0, "Negative position for team {}", self.name);
             self.general_pos_data = Some((position, statistics));
         }
     }
