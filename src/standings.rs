@@ -196,14 +196,12 @@ fn evaluate<D: Duel, T: Team>(
     indexes.shuffle(&mut rng);
     indexes.sort_by(|&i1, &i2| {
         let (_, team_data_1) = &builder.teams[i1];
-        let size_1 = (builder.groups[team_data_1.group].size - 1) as f64;
+        let size_1 = builder.groups[team_data_1.group].size.saturating_sub(1);
         let (_, team_data_2) = &builder.teams[i2];
-        let size_2 = (builder.groups[team_data_2.group].size - 1) as f64;
+        let size_2 = builder.groups[team_data_2.group].size.saturating_sub(1);
 
-        let wins_1 = team_data_1.wins as f64 / size_1;
-        let wins_2 = team_data_2.wins as f64 / size_2;
-        let points_1 = team_data_1.points as f64 / size_1;
-        let points_2 = team_data_2.points as f64 / size_2;
+        let (wins_1, points_1) = calc_percentages(size_1, team_data_1, 1);
+        let (wins_2, points_2) = calc_percentages(size_2, team_data_2, 1);
 
         wins_1
             .total_cmp(&wins_2)
@@ -215,9 +213,8 @@ fn evaluate<D: Duel, T: Team>(
         let team = &mut builder.teams[team_index];
         let group = &mut builder.groups[team.1.group];
 
-        let duel_number = group.size - 1;
-        let wins = team.1.wins as f64 / duel_number as f64;
-        let points = team.1.points as f64 / (duel_number * max_duel_points.get() as usize) as f64;
+        let duels_number = group.size.saturating_sub(1);
+        let (wins, points) = calc_percentages(duels_number, &team.1, max_duel_points.get());
 
         team.0.general_standings_callback(
             (i + 1)
@@ -251,6 +248,20 @@ fn advantage<D: Duel>(duel: &mut D, max_duel_points: NonZero<u16>) -> bool {
 }
 
 #[inline]
+fn calc_percentages(duels_number: usize, team_data: &TeamData, points_multiplier: u16) -> (f64, f64) {
+    if duels_number != 0 {
+        (
+            team_data.wins as f64 / duels_number as f64,
+            team_data.points as f64 / (duels_number * points_multiplier as usize) as f64
+        )
+    } else {
+        // There are no duels (and presumably just one team),
+        // so return 100% win rate and 0% points difference
+        (1.0, 0.0)
+    }
+}
+
+#[inline]
 fn format_number<N: Display>(number: N, always_show_sign: bool) -> String {
     if always_show_sign {
         format!("{:+}", number)
@@ -261,8 +272,8 @@ fn format_number<N: Display>(number: N, always_show_sign: bool) -> String {
 
 #[inline]
 fn format_percentages(percentage: f64, always_show_sign: bool) -> String {
-    debug_assert!(percentage.is_nan(), "Percentage is not a number");
-    debug_assert!(percentage.is_infinite(), "Percentage is infinite");
+    debug_assert!(!percentage.is_nan(), "Percentage is not a number");
+    debug_assert!(!percentage.is_infinite(), "Percentage is infinite");
     if always_show_sign {
         format!("{:+.2}%", percentage * 100.0)
     } else {
